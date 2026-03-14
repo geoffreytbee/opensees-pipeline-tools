@@ -1,0 +1,74 @@
+site_name: OpenSees Pipeline Analysis Toolkit
+site_description: A Python toolkit for nonlinear buried pipeline analysis using OpenSeesPy
+site_author: Geoffrey Bee
+repo_url: https://github.com/geoffreybee/opensees-pipeline-tools
+repo_name: geoffreybee/opensees-pipeline-tools
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: blue grey
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: blue grey
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.tabs.link
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: [src]
+          options:
+            docstring_style: google
+            show_source: true
+
+markdown_extensions:
+  - admonition
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js
+  - https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js
+
+extra_css:
+  - https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css
+
+nav:
+  - Home: index.md
+  - Theory:
+      - Pipe-Soil Interaction: theory/pipe-soil-interaction.md
+      - Beam Elements: theory/beam-elements.md
+      - Probabilistic Methods: theory/probabilistic.md
+  - Architecture: architecture.md
+  - Validation Report: validation-report.md
+  - Assumptions: assumptions.md
+  - Roadmap: roadmap.md
+  - Contributing: contributing.md

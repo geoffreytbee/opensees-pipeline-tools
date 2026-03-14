@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68.0", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "opensees-pipeline-tools"
+version = "0.1.0"
+description = "A Python toolkit for nonlinear buried pipeline analysis using OpenSeesPy"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.12"
+authors = [
+    {name = "Geoffrey Bee", email = "geoffrey.bee@example.com"},
+]
+keywords = ["opensees", "pipeline", "geotechnical", "soil-structure-interaction", "geohazard"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "openseespy>=3.5.1",
+    "numpy>=1.26.0",
+    "matplotlib>=3.8.0",
+    "pandas>=2.1.0",
+    "openpyxl>=3.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "ruff>=0.3.0",
+    "black>=24.0.0",
+]
+docs = [
+    "mkdocs-material>=9.5.0",
+    "mkdocstrings[python]>=0.24.0",
+]
+viz = [
+    "pyvista>=0.43.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/geoffreybee/opensees-pipeline-tools"
+Documentation = "https://geoffreybee.github.io/opensees-pipeline-tools"
+Repository = "https://github.com/geoffreybee/opensees-pipeline-tools"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 88
+target-version = ["py312"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+select = ["E", "F", "I", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
