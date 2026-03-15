@@ -63,3 +63,9 @@ htmlcov/
 
 # Ruff
 .ruff_cache/
+
+# Generated analysis outputs — recreate by running the analysis script
+results/
+examples/**/*.csv
+examples/**/*.png
+examples/**/*.json

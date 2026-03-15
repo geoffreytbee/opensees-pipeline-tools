@@ -1,59 +1,165 @@
-"""Post-processing for OpenSees pipeline analysis results.
+"""Post-processing results writer for OpenSees pipeline analysis.
 
-This module extracts and processes results from completed OpenSees analyses
-including nodal displacements, element forces, bending moments, and stresses.
+This module provides the ``write_results()`` function that standardises output
+from any analysis script into a set of CSV and JSON files.  These files can be
+loaded by the standalone viewer (``tools/opensees_pipeline_viewer.py``) without
+requiring OpenSeesPy.
 
-Critical convention for moment extraction:
-    Use eleForce with node-based extraction and negate My_i. Do NOT average
-    My_j[left] and My_i[right] at shared nodes — this causes cancellation
-    and produces near-zero values at interior nodes.
+Output files written by ``write_results()``:
 
-This module is a stub — full implementation is planned.
+    pipe_nodes.csv
+        Nodal coordinates and displacements — one row per pipe node.
+
+    pipe_elements.csv
+        Element axial force and end moments — one row per pipe element.
+
+    spring_forces.csv
+        Soil spring forces and tributary lengths — one row per node.
+
+    model_metadata.json
+        Pipe geometry, material properties, analysis metadata, and any
+        additional key/value pairs supplied by the caller.
+
+All spatial coordinates are stored in **metres** regardless of the unit system
+used during analysis.  If Imperial units were used, convert to metres *before*
+calling ``write_results()``.
+
+This function should be the **last** call in any analysis script (before
+``ops.wipe()``).
 """
 
 from __future__ import annotations
 
+import json
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
-def extract_displacements() -> None:
-    """Extract nodal displacements from an OpenSees model.
+import numpy as np
+import pandas as pd
 
-    This is a stub. The full implementation will extract displacement
-    components (dx, dy, dz, rx, ry, rz) at all nodes.
 
-    Raises:
-        NotImplementedError: This function is not yet implemented.
+def write_results(
+    output_dir: str,
+    x_nodes: np.ndarray,
+    disp_ux: np.ndarray,
+    disp_uy: np.ndarray,
+    disp_uz: np.ndarray,
+    elem_My_i: np.ndarray,
+    elem_My_j: np.ndarray,
+    elem_N: np.ndarray,
+    spring_ax: np.ndarray,
+    spring_vt: np.ndarray,
+    trib: np.ndarray,
+    pipe_params: dict[str, float],
+    model_metadata: dict[str, Any],
+) -> None:
+    """Write standardised analysis results for the post-processor viewer.
+
+    This function should be the last call in any analysis script.  It writes
+    four output files that the standalone viewer can load without any
+    dependency on OpenSeesPy.
+
+    All spatial coordinates must be in metres.  If the analysis used Imperial
+    units, convert before calling this function.
+
+    Args:
+        output_dir: Directory to write output files.  Created if it does
+            not exist.
+        x_nodes: Node positions along pipe axis [m], shape ``(n_nodes,)``.
+        disp_ux: Nodal displacement in X [m], shape ``(n_nodes,)``.
+        disp_uy: Nodal displacement in Y [m], shape ``(n_nodes,)``.
+        disp_uz: Nodal displacement in Z [m], shape ``(n_nodes,)``.
+        elem_My_i: Bending moment at i-end of each element [N·m],
+            shape ``(n_elem,)``.  Sign convention: as returned by
+            ``eleForce`` (reaction sign — negate for internal moment).
+        elem_My_j: Bending moment at j-end of each element [N·m],
+            shape ``(n_elem,)``.
+        elem_N: Axial force in each element [N], shape ``(n_elem,)``.
+        spring_ax: Axial soil spring force at each node [N],
+            shape ``(n_nodes,)``.
+        spring_vt: Vertical soil spring force at each node [N],
+            shape ``(n_nodes,)``.
+        trib: Tributary length at each node [m], shape ``(n_nodes,)``.
+        pipe_params: Pipe section properties dictionary with keys:
+            ``outer_R`` — outer radius [m],
+            ``t_wall`` — wall thickness [m],
+            ``E`` — Young's modulus [Pa],
+            ``nu`` — Poisson's ratio [-].
+        model_metadata: Additional metadata dict.  Common keys include
+            ``unit_system``, ``analysis_type``, ``fault_zone_x_min``,
+            ``fault_zone_x_max``.  All key/value pairs are written to
+            ``model_metadata.json``.
     """
-    raise NotImplementedError("Displacement extraction not yet implemented")
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
 
+    n_nodes = len(x_nodes)
+    n_elem = n_nodes - 1
 
-def extract_bending_moments() -> None:
-    """Extract bending moments along the pipeline.
+    # ── pipe_nodes.csv ────────────────────────────────────────────────────
+    nodes_df = pd.DataFrame(
+        {
+            "node_index": np.arange(n_nodes),
+            "x_m": x_nodes,
+            "UX_m": disp_ux,
+            "UY_m": disp_uy,
+            "UZ_m": disp_uz,
+        }
+    )
+    nodes_df.to_csv(out / "pipe_nodes.csv", index=False, float_format="%.8e")
 
-    Uses eleForce to get element end forces and extracts My at node i
-    (negated) for each element. Does NOT average moments from adjacent
-    elements at shared nodes.
+    # ── pipe_elements.csv ─────────────────────────────────────────────────
+    elems_df = pd.DataFrame(
+        {
+            "elem_index": np.arange(n_elem),
+            "x_i_m": x_nodes[:n_elem],
+            "x_j_m": x_nodes[1 : n_elem + 1],
+            "N_N": elem_N,
+            "My_i_Nm": elem_My_i,
+            "My_j_Nm": elem_My_j,
+        }
+    )
+    elems_df.to_csv(out / "pipe_elements.csv", index=False, float_format="%.8e")
 
-    This is a stub — full implementation is planned.
+    # ── spring_forces.csv ─────────────────────────────────────────────────
+    springs_df = pd.DataFrame(
+        {
+            "node_index": np.arange(n_nodes),
+            "x_m": x_nodes,
+            "trib_m": trib,
+            "axial_spring_N": spring_ax,
+            "vertical_spring_N": spring_vt,
+        }
+    )
+    springs_df.to_csv(out / "spring_forces.csv", index=False, float_format="%.8e")
 
-    Raises:
-        NotImplementedError: This function is not yet implemented.
-    """
-    raise NotImplementedError("Moment extraction not yet implemented")
+    # ── model_metadata.json ───────────────────────────────────────────────
+    outer_r = pipe_params["outer_R"]  # [m]
+    t_wall = pipe_params["t_wall"]  # [m]
+    e_mod = pipe_params["E"]  # [Pa]
+    nu = pipe_params["nu"]  # [-]
 
+    metadata: dict[str, Any] = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "unit_system": model_metadata.get("unit_system", "SI"),
+        "pipe_od_m": 2.0 * outer_r,
+        "pipe_t_m": t_wall,
+        "pipe_E_Pa": e_mod,
+        "pipe_nu": nu,
+        "analysis_type": model_metadata.get("analysis_type", "unknown"),
+    }
 
-def compute_bending_stress() -> None:
-    """Compute bending stress from moment and pipe section properties.
+    # Merge caller-supplied metadata, converting numpy types for JSON
+    for key, value in model_metadata.items():
+        if key not in metadata:
+            if isinstance(value, np.integer):
+                value = int(value)
+            elif isinstance(value, np.floating):
+                value = float(value)
+            elif isinstance(value, np.ndarray):
+                value = value.tolist()
+            metadata[key] = value
 
-    sigma_b = M * (D/2) / I
-
-    where:
-        M = bending moment [kN*m | kip*ft]
-        D = pipe outside diameter [m | ft]
-        I = moment of inertia [m^4 | ft^4]
-
-    This is a stub — full implementation is planned.
-
-    Raises:
-        NotImplementedError: This function is not yet implemented.
-    """
-    raise NotImplementedError("Stress computation not yet implemented")
+    with open(out / "model_metadata.json", "w") as fh:
+        json.dump(metadata, fh, indent=2)
