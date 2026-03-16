@@ -69,3 +69,4 @@ results/
 examples/**/*.csv
 examples/**/*.png
 examples/**/*.json
+pipeline_report_*.html

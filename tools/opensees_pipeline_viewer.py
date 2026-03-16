@@ -42,11 +42,13 @@ N_CIRC = 16  # circumferential discretisation points per ring
 RESULT_INFO: dict[str, dict[str, str]] = {
     "sigma_long": {"label": "Longitudinal Stress", "unit": "Pa", "key": "1"},
     "sigma_vm": {"label": "Von Mises Stress", "unit": "Pa", "key": "2"},
-    "epsilon_long": {"label": "Longitudinal Strain", "unit": "m/m", "key": "3"},
-    "disp_vert": {"label": "Vertical Displacement", "unit": "m", "key": "4"},
-    "moment": {"label": "Bending Moment", "unit": "N·m", "key": "5"},
-    "spring_vt": {"label": "Vertical Spring Force", "unit": "N", "key": "6"},
-    "spring_ax": {"label": "Axial Spring Force", "unit": "N", "key": "7"},
+    "sigma_hoop": {"label": "Hoop Stress", "unit": "Pa", "key": "3"},
+    "epsilon_long": {"label": "Longitudinal Strain", "unit": "m/m", "key": "4"},
+    "disp_vert": {"label": "Vertical Displacement", "unit": "m", "key": "5"},
+    "disp_ax": {"label": "Axial Displacement", "unit": "m", "key": "6"},
+    "moment": {"label": "Bending Moment", "unit": "N·m", "key": "7"},
+    "spring_vt": {"label": "Vertical Spring Force", "unit": "N", "key": "8"},
+    "spring_ax": {"label": "Axial Spring Force", "unit": "N", "key": "9"},
 }
 
 RESULT_KEYS = list(RESULT_INFO.keys())
@@ -55,8 +57,10 @@ RESULT_KEYS = list(RESULT_INFO.keys())
 _DISPLAY_SCALE: dict[str, float] = {
     "sigma_long": 1e-6,  # Pa → MPa
     "sigma_vm": 1e-6,  # Pa → MPa
+    "sigma_hoop": 1e-6,  # Pa → MPa
     "epsilon_long": 1e3,  # m/m → mm/m (millistrain)
     "disp_vert": 1e3,  # m → mm
+    "disp_ax": 1e3,  # m → mm
     "moment": 1e-3,  # N·m → kN·m
     "spring_vt": 1e-3,  # N → kN
     "spring_ax": 1e-3,  # N → kN
@@ -65,8 +69,10 @@ _DISPLAY_SCALE: dict[str, float] = {
 _DISPLAY_YLABEL: dict[str, str] = {
     "sigma_long": "Stress [MPa]",
     "sigma_vm": "Stress [MPa]",
+    "sigma_hoop": "Stress [MPa]",
     "epsilon_long": "Strain [mm/m]",
     "disp_vert": "Displacement [mm]",
+    "disp_ax": "Displacement [mm]",
     "moment": "Moment [kN·m]",
     "spring_vt": "Force [kN]",
     "spring_ax": "Force [kN]",
@@ -331,8 +337,15 @@ def compute_scalar_fields(data: dict) -> dict[str, np.ndarray]:
     # epsilon_long = sigma_long / E  [-]
     epsilon_long = sigma_long / e_mod
 
+    # ── Hoop stress (constant around ring unless pressure varies) ────
+    # sigma_hoop = P * R / t  [Pa]  — scalar broadcast to surface
+    sigma_hoop_val = data["sigma_hoop"]  # scalar [Pa]
+    n_nodes = len(m_node)
+
     # ── Ring-constant fields ──────────────────────────────────────────
     disp_vert = data["disp_vert"]
+    nodes_df = data["nodes_df"]
+    disp_ax_nodes = nodes_df["UX_m"].values  # axial displacement [m]
 
     def ring_constant(vals: np.ndarray) -> np.ndarray:
         """Repeat per-node values around the circumference and flatten."""
@@ -341,8 +354,10 @@ def compute_scalar_fields(data: dict) -> dict[str, np.ndarray]:
     return {
         "sigma_long": sigma_long.ravel(),
         "sigma_vm": sigma_vm.ravel(),
+        "sigma_hoop": np.full(n_nodes * nc, sigma_hoop_val),
         "epsilon_long": epsilon_long.ravel(),
         "disp_vert": ring_constant(disp_vert),
+        "disp_ax": ring_constant(disp_ax_nodes),
         "moment": ring_constant(m_node),
         "spring_vt": ring_constant(springs["vertical_spring_N"].values),
         "spring_ax": ring_constant(springs["axial_spring_N"].values),
@@ -383,6 +398,9 @@ def get_2d_profile(
         vals_bot = full[half::nc]  # theta ≈ π
         # Envelope: pick fibre with larger absolute value
         vals = np.where(np.abs(vals_top) >= np.abs(vals_bot), vals_top, vals_bot)
+    elif result_key == "sigma_hoop":
+        # Hoop stress is constant — just take first of each ring
+        vals = full[::nc]
     else:
         vals = full[::nc]
 
@@ -506,16 +524,17 @@ def print_summary(data: dict, fields: dict[str, np.ndarray]) -> None:
     print(f"  Axial springs yielded     : {np.sum(ax_mask)} / {n_nodes}")
     print()
     print("KEYBOARD SHORTCUTS")
-    print("  1  : Longitudinal stress")
-    print("  2  : Von Mises stress")
-    print("  3  : Longitudinal strain")
-    print("  4  : Vertical displacement")
-    print("  5  : Bending moment")
-    print("  6  : Vertical spring force")
-    print("  7  : Axial spring force")
-    print("  c  : Cycle colormap")
-    print("  s  : Save screenshot to results folder")
-    print("  q  : Quit")
+    print("  1-3  : Stress results (longitudinal, Von Mises, hoop)")
+    print("  4    : Strain (longitudinal)")
+    print("  5-6  : Displacement (vertical UZ, axial UX)")
+    print("  7-9  : Forces (moment, vertical spring, axial spring)")
+    print("  T/B  : Top / Bottom view")
+    print("  R/L  : Right / Left view")
+    print("  F/K  : Front / Back view")
+    print("  I    : Isometric view (default)")
+    print("  C    : Cycle colormap (jet -> coolwarm -> viridis)")
+    print("  S    : Save screenshot")
+    print("  Q    : Quit")
     print("=" * 60)
 
 
@@ -605,7 +624,44 @@ def create_viewer(data: dict) -> None:
         )
 
     _add_deformed()
-    plotter.camera_position = "iso"
+
+    # ── On-screen menu overlay ────────────────────────────────────────
+    _MENU_BODY = (
+        "\n"
+        "[STRESS]           [STRAIN]        [DISPLACEMENT]    [FORCES]\n"
+        "1 Longitudinal     4 Long. Strain   5 Vertical UZ     7 Moment\n"
+        "2 Von Mises                         6 Axial UX        8 Vert. Spring\n"
+        "3 Hoop                                                9 Axial Spring\n"
+        "\n"
+        "[VIEWS]\n"
+        "T Top  B Bottom  R Right  L Left  F Front  K Back  I Iso\n"
+        "\n"
+        "C Cycle colormap   S Save screenshot   Q Quit"
+    )
+
+    # Mutable reference for the header text actor so we can remove/re-add it
+    state["menu_actor"] = None
+
+    def _update_menu() -> None:
+        """Update the on-screen result header + static menu overlay."""
+        if state["menu_actor"] is not None:
+            plotter.remove_actor(state["menu_actor"])
+        info = RESULT_INFO[state["active"]]
+        header = f"RESULT: {info['label']} ({info['unit']})"
+        full_text = header + _MENU_BODY
+        state["menu_actor"] = plotter.add_text(
+            full_text,
+            position="upper_right",
+            font_size=8,
+            font="courier",
+            color="white",
+            name="menu_overlay",
+        )
+
+    _update_menu()
+
+    # ── Default camera ────────────────────────────────────────────────
+    plotter.view_isometric()
 
     # ── Matplotlib 2D companion ───────────────────────────────────────
     plt.ion()
@@ -629,19 +685,40 @@ def create_viewer(data: dict) -> None:
 
     _update_2d()
 
-    # ── Key bindings ──────────────────────────────────────────────────
+    # ── Key bindings: result switching (1–9) ──────────────────────────
 
     def _switch(key: str) -> None:
         idx = int(key) - 1
         if 0 <= idx < len(RESULT_KEYS):
-            state["active"] = RESULT_KEYS[idx]
+            result_key = RESULT_KEYS[idx]
+            # Guard: do not switch to empty or all-NaN fields
+            values = deformed_grid.point_data[result_key]
+            if np.all(values == 0) or np.all(np.isnan(values)):
+                print(
+                    f"  WARNING: {result_key} has no data"
+                    " — staying on current result"
+                )
+                return
+            state["active"] = result_key
             _add_deformed()
+            _update_menu()
             plotter.render()
             _update_2d()
             print(f"  → {RESULT_INFO[state['active']]['label']}")
 
-    for k in "1234567":
+    for k in "123456789":
         plotter.add_key_event(k, lambda key=k: _switch(key))
+
+    # ── Key bindings: camera views ────────────────────────────────────
+    plotter.add_key_event("t", lambda: plotter.view_xy())
+    plotter.add_key_event("b", lambda: plotter.view_xy(negative=True))
+    plotter.add_key_event("r", lambda: plotter.view_yz())
+    plotter.add_key_event("l", lambda: plotter.view_yz(negative=True))
+    plotter.add_key_event("f", lambda: plotter.view_xz())
+    plotter.add_key_event("k", lambda: plotter.view_xz(negative=True))
+    plotter.add_key_event("i", lambda: plotter.view_isometric())
+
+    # ── Key bindings: colormap cycling ────────────────────────────────
 
     def _cycle_cmap() -> None:
         state["cmap_idx"] = (state["cmap_idx"] + 1) % len(state["cmaps"])
@@ -651,6 +728,8 @@ def create_viewer(data: dict) -> None:
         plotter.render()
 
     plotter.add_key_event("c", _cycle_cmap)
+
+    # ── Key bindings: screenshot ──────────────────────────────────────
 
     def _screenshot() -> None:
         rk = state["active"]
